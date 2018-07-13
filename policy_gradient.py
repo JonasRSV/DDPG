@@ -242,13 +242,13 @@ class PG(object):
         return state, out, scaled_out
 
     def predict(self, state):
-        return self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
+        return self.sess.run(self.actor_scaled_out, feed_dict={self.actor_state: state})
 
     def critique(self, state, action):
         return self.sess.run(self.critic_out, feed_dict={self.critic_state: state, self.critic_action: action})
 
     def target_predict(self, state):
-        return self.sess.run(self.target_actor_out, feed_dict={self.target_actor_state: state})
+        return self.sess.run(self.target_actor_scaled_out, feed_dict={self.target_actor_state: state})
 
     def target_critique(self, state, action):
         return self.sess.run(self.target_critic_out, feed_dict={self.target_critic_state: state, self.target_critic_action: action})

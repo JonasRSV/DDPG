@@ -17,11 +17,15 @@ STATE_SPACE   = 3
 LEARNING_RATE = 0.01
 
 FRAME_SZ      = 1000
-BATCHSZ       = 20
+BATCHSZ       = 10
 MEMORY        = 0.98
 TAU           = 0.01
 
-NOISE_REVERSION = 0.99
+
+DELTA = 0.5
+SIGMA = 0.5
+OU_A  = 0.5
+OU_MU = 0
 
 
 def train(env, actor, rpbuffer):
@@ -31,7 +35,7 @@ def train(env, actor, rpbuffer):
     plt.style.use('dark_background')
     actions = np.arange(ACTION_SPACE)
 
-    noise_process = Noise(1, 0, NOISE_REVERSION)
+    noise_process = Noise(DELTA, SIGMA, OU_A, OU_MU)
 
     generations   = []
     rewards       = []
@@ -47,7 +51,7 @@ def train(env, actor, rpbuffer):
             s = s1.reshape(1, -1)
 
             action = actor.predict(s)[0]
-            noise  = noise_process.process(noise)
+            noise  = noise_process.ornstein_uhlenbeck_level(noise)
 
             action = action + noise
 

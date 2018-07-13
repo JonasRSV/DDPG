@@ -19,9 +19,9 @@ LEARNING_RATE = 0.01
 FRAME_SZ      = 1000
 BATCHSZ       = 20
 MEMORY        = 0.98
-TAU           = 0.001
+TAU           = 0.01
 
-NOISE_REVERSION = 0.999
+NOISE_REVERSION = 0.99
 
 
 def train(env, actor, rpbuffer):
@@ -62,7 +62,14 @@ def train(env, actor, rpbuffer):
                 s1b, a1b, r1b, dd, s2b = rpbuffer.get(BATCHSZ)
                 environment_utility = actor.target_critique(s2b, a1b)
 
-                _ = actor.train(s1b, a1b, environment_utility)
+                maximal_utilities = []
+                for reward, utility, term in zip(r1b, environment_utility, dd):
+                    if term:
+                        maximal_utilities.append([reward])
+                    else:
+                        maximal_utilities.append(reward + MEMORY * utility)
+
+                _ = actor.train(s1b, a1b, maximal_utilities)
                 actor.update_target_network()
 
         generations.append(g)
@@ -93,6 +100,7 @@ def play(env, actor, games=20):
 if __name__ == "__main__":
 
     env = gym.make(ENV)
+    print(env.action_space)
 
     with tf.Session() as sess:
         actor   = policy_gradient.PG(sess, STATE_SPACE, ACTION_SPACE, learning_rate=LEARNING_RATE, tau=TAU)

@@ -11,20 +11,20 @@ from noise import Noise
 
 ENV = 'Pendulum-v0'
 
-GENERATIONS   = 1000
+GENERATIONS   = 10000
 ACTION_SPACE  = 1
 STATE_SPACE   = 3 
 LEARNING_RATE = 0.01
 
-FRAME_SZ      = 1000
-BATCHSZ       = 10
+FRAME_SZ      = 1000000
+BATCHSZ       = 100
 MEMORY        = 0.98
 TAU           = 0.01
 
 
-DELTA = 0.5
-SIGMA = 0.5
-OU_A  = 0.5
+DELTA = 0.2
+SIGMA = 0.2
+OU_A  = 0.2
 OU_MU = 0
 
 
@@ -37,8 +37,10 @@ def train(env, actor, rpbuffer):
 
     noise_process = Noise(DELTA, SIGMA, OU_A, OU_MU)
 
-    generations   = []
-    rewards       = []
+    # generations   = []
+    # rewards       = []
+
+    steps = 0
     for g in range(GENERATIONS):
         s1       = env.reset()
         terminal = False
@@ -46,7 +48,9 @@ def train(env, actor, rpbuffer):
         reward = 0
         noise = np.zeros(ACTION_SPACE)
         while not terminal:
-            env.render()
+            # env.render()
+
+            steps += 1
 
             s = s1.reshape(1, -1)
 
@@ -76,11 +80,13 @@ def train(env, actor, rpbuffer):
                 _ = actor.train(s1b, a1b, maximal_utilities)
                 actor.update_target_network()
 
-        generations.append(g)
-        rewards.append(reward)
+        # generations.append(g)
+        # rewards.append(reward)
         
-        plt.plot(generations, rewards)
-        plt.pause(0.001)
+        # plt.plot(generations, rewards)
+        # plt.pause(0.001)
+
+        print(steps)
 
     env.close()
 

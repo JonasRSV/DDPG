@@ -169,10 +169,7 @@ class PG(object):
             h_w3 = weigth_variable([CRITIC_CONNECTIONS, CRITIC_CONNECTIONS])
             h_b3 = bias_variable([CRITIC_CONNECTIONS])
 
-            con_aw = weigth_variable([CRITIC_CONNECTIONS, self.a_dim])
-            con_ab = bias_variable([self.a_dim])
-
-            out_w  = weigth_variable([self.a_dim, 1])
+            out_w  = weigth_variable([CRITIC_CONNECTIONS + self.a_dim, 1])
             out_b  = bias_variable([1])
 
 
@@ -188,11 +185,10 @@ class PG(object):
             h3 = tf.matmul(h2, h_w3)
             h3 = tf.nn.tanh(tf.add(h3, h_b3))
 
-            con_a = tf.matmul(h3, con_aw)
-            con_a = tf.nn.tanh(tf.add(con_a, con_ab))
-            con_a = tf.add(con_a, action)
+            #Add Action
+            h3 = tf.concat([h3, action], axis=-1)
 
-            out = tf.matmul(con_a, out_w)
+            out = tf.matmul(h3, out_w)
             out = tf.add(out, out_b)
 
         return state, action, out

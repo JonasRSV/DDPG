@@ -5,3 +5,6 @@ Converges to no loss rather quickly but does not always succeed with balance'ing
 But its works fine other than that.
 
 ![Imgur](https://i.imgur.com/i8kSlVA.png)
+
+
+#### TODO: try parameter noise instead of action noise - https://arxiv.org/pdf/1706.01905.pdf

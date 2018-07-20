@@ -1,6 +1,6 @@
 import gym
 import time
-import policy_gradient
+import ddpg
 import sys
 import replay_buffer
 import numpy as np
@@ -11,62 +11,66 @@ from noise import Noise
 
 ENV = 'Pendulum-v0'
 
-GENERATIONS   = 10000
+GENERATIONS   = 2000
 ACTION_SPACE  = 1
 STATE_SPACE   = 3 
 LEARNING_RATE = 0.01
 
 FRAME_SZ      = 1000000
-BATCHSZ       = 100
-MEMORY        = 0.98
+BATCHSZ       = 1024
+MEMORY        = 0.99
 TAU           = 0.01
 
 
-DELTA = 0.2
-SIGMA = 0.2
-OU_A  = 0.2
+DELTA = 1.0
+SIGMA = 0.3
+OU_A  = 0.3
 OU_MU = 0
+
+NOISE_DECAY  = 0.95
+INTIAL_NOISE = 0.2
 
 
 def train(env, actor, rpbuffer):
 
-    actor.update_target_network()
+    actor.set_networks_equal()
 
-    plt.style.use('dark_background')
-    actions = np.arange(ACTION_SPACE)
+    summary_write = tf.summary.FileWriter("summaries/", actor.sess.graph)
+    summary_index = 0
 
     noise_process = Noise(DELTA, SIGMA, OU_A, OU_MU)
 
-    # generations   = []
-    # rewards       = []
-
     steps = 0
-    for g in range(GENERATIONS):
+    for g in range(1, GENERATIONS):
         s1       = env.reset()
         terminal = False
-
-        reward = 0
+        
+        reward     = 0
+        avg_action = 0
+        loss       = 0
         noise = np.zeros(ACTION_SPACE)
         while not terminal:
-            # env.render()
+            env.render()
 
             steps += 1
 
             s = s1.reshape(1, -1)
 
             action = actor.predict(s)[0]
-            noise  = noise_process.ornstein_uhlenbeck_level(noise)
 
-            action = action + noise
+            avg_action += action
+
+            noise  = noise_process.ornstein_uhlenbeck_level(noise) * INTIAL_NOISE * NOISE_DECAY**g * 3
+            action = np.clip((action + noise) * 2, -2, 2)
 
             s2, r2, terminal, _ = env.step(action)
-            reward += r2
 
+            reward += r2
             rpbuffer.add((s1, action, r2, terminal, s2))
             s1 = s2
 
-            if len(rpbuffer.buffer) >= BATCHSZ:
 
+            if len(rpbuffer.buffer) > BATCHSZ:
                 s1b, a1b, r1b, dd, s2b = rpbuffer.get(BATCHSZ)
                 environment_utility = actor.target_critique(s2b, a1b)
 
@@ -77,16 +81,20 @@ def train(env, actor, rpbuffer):
                     else:
                         maximal_utilities.append(reward + MEMORY * utility)
 
-                _ = actor.train(s1b, a1b, maximal_utilities)
+                loss += actor.train(s1b, a1b, maximal_utilities)
                 actor.update_target_network()
 
-        # generations.append(g)
-        # rewards.append(reward)
-        
-        # plt.plot(generations, rewards)
-        # plt.pause(0.001)
 
-        print(steps)
+        summary = tf.Summary()
+        summary.value.add(tag="Reward", simple_value=float(reward))
+        summary.value.add(tag="Steps", simple_value=float(steps))
+        summary.value.add(tag="Loss", simple_value=float(loss / 200))
+        summary.value.add(tag="Action", simple_value=float(avg_action / 200))
+
+        summary_write.add_summary(summary, summary_index)
+        summary_write.flush()
+
+        summary_index += 1
 
     env.close()
 
@@ -101,6 +109,7 @@ def play(env, actor, games=20):
             env.render()
             s0 = s0.reshape(1, -1)
             action = actor.predict(s0)[0]
+            print(action)
 
             s0, _, terminal, _ = env.step(action)
 
@@ -113,7 +122,7 @@ if __name__ == "__main__":
     print(env.action_space)
 
     with tf.Session() as sess:
-        actor   = policy_gradient.PG(sess, STATE_SPACE, ACTION_SPACE, learning_rate=LEARNING_RATE, tau=TAU)
+        actor   = ddpg.DDPG(sess, STATE_SPACE, ACTION_SPACE, learning_rate=LEARNING_RATE, tau=TAU, batch_size=BATCHSZ)
         rpbuffer = replay_buffer.ReplayBuffer(FRAME_SZ)
 
         saver = tf.train.Saver()

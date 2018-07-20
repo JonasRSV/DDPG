@@ -5,4 +5,4 @@ Converges to no loss rather quickly but does not always succeed with balance'ing
 But its works fine other than that.
 
 
-![Convergence](https://imgur.com/a/LDot02C)
+![https://imgur.com/a/LDot02C](Convergence)

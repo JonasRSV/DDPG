@@ -1,10 +1,11 @@
 import tensorflow as tf
+import numpy as np
 
 class OrnsteinNoiseTensorflow(object):
 
     def __init__(self, delta, sigma, ou_a, ou_mu
                 , noise_default=0, exploration=1
-                , decay=1e-5):
+                , decay=2e-5):
         self.delta = tf.constant(delta, dtype=tf.float32)
         self.sigma = tf.constant(sigma, dtype=tf.float32)
         self.ou_a  = tf.constant(ou_a,  dtype=tf.float32)
@@ -13,7 +14,10 @@ class OrnsteinNoiseTensorflow(object):
         self.noise_default    = tf.constant(noise_default, dtype=tf.float32)
         self.noise_assign_ops = []
 
-        self.exploration = tf.Variable(exploration, dtype=tf.float32)
+        self.exploration = tf.Variable(exploration, 
+                                       dtype=tf.float32, 
+                                       trainable=False)
+
         self.decay       = tf.constant(1 - decay, dtype=tf.float32)
 
         self.exploration_update_op =\
@@ -37,7 +41,7 @@ class OrnsteinNoiseTensorflow(object):
 
         drift           = self.ou_a * (self.ou_mu - noise) * self.delta
         brownian_motion = self.brownian_motion(noise)
-        new_noise       = (noise + drift + brownian_motion) #* self.exploration
+        new_noise       = (noise + drift + brownian_motion) * self.exploration
 
         self.noise_assign_ops.append(noise.assign(new_noise))
 
@@ -46,5 +50,5 @@ class OrnsteinNoiseTensorflow(object):
         return outputs
 
     def noise_update_tensors(self):
-        return self.noise_assign_ops #, self.exploration_update_op]
+        return [*self.noise_assign_ops, self.exploration_update_op]
 

@@ -16,7 +16,7 @@ CRITIC_CONNECTIONS = 15
 class DDPG(object):
 
     def __init__(self, sess, state_dim, action_dim, learning_rate=0.01, 
-                 tau=0.001, delta=1, sigma=0.3, ou_a=0.3, ou_mu=0.0, var_index=0,
+                 tau=0.001, delta=1.0, sigma=0.3, ou_a=0.3, ou_mu=0.0, var_index=0,
                  parameter_noise=True):
         self.sess  = sess
         self.s_dim = state_dim
@@ -273,7 +273,7 @@ class DDPG(object):
 
     def predict(self, state):
         if self.parameter_noise:
-            return self.sess.run((self.noise_process.noise_update_tensors(), self.actor_out), feed_dict={self.actor_state: state})[-1]
+            return self.sess.run((*self.noise_process.noise_update_tensors(), self.actor_out), feed_dict={self.actor_state: state})[-1]
         else:
             return self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
 

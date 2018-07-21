@@ -5,18 +5,17 @@ import sys
 import replay_buffer
 import numpy as np
 import tensorflow as tf
-import matplotlib.pyplot as plt
 
 
 ENV = 'Pendulum-v0'
 
-GENERATIONS   = 2000
+EPOCHS        = 2000
 ACTION_SPACE  = 1
 STATE_SPACE   = 3 
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.001
 
-FRAME_SZ      = 1000000
-BATCHSZ       = 1024
+FRAME_SZ      = 100000
+BATCHSZ       = 1400
 MEMORY        = 0.99
 TAU           = 0.01
 
@@ -29,7 +28,7 @@ def train(env, actor, rpbuffer):
     summary_index = 0
 
     steps = 0
-    for g in range(1, GENERATIONS):
+    for g in range(1, EPOCHS):
         s1       = env.reset()
         terminal = False
         

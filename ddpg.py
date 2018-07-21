@@ -10,14 +10,14 @@ def bias_variable(shape):
     initial = tf.constant(0.03, shape=shape)
     return tf.Variable(initial, dtype=tf.float32)
 
-ACTOR_CONNECTIONS  = 15
-CRITIC_CONNECTIONS = 15
+ACTOR_CONNECTIONS  = 8
+CRITIC_CONNECTIONS = 8
 
 class DDPG(object):
 
     def __init__(self, sess, state_dim, action_dim, learning_rate=0.01, 
                  tau=0.001, delta=1.0, sigma=0.3, ou_a=0.3, ou_mu=0.0, var_index=0,
-                 parameter_noise=True):
+                 decay=1e-4, parameter_noise=True):
         self.sess  = sess
         self.s_dim = state_dim
         self.a_dim = action_dim
@@ -26,7 +26,8 @@ class DDPG(object):
         self.noise_process   = noise.OrnsteinNoiseTensorflow(delta,
                                                              sigma,
                                                              ou_a,
-                                                             ou_mu)
+                                                             ou_mu,
+                                                             decay=decay)
 
         ########################################################
         # Define Actor Critic Architecture and target networks #
@@ -77,7 +78,7 @@ class DDPG(object):
         actor_train_gradients = tf.gradients(actor_out, actor_variables, -actor_gradients)
         actor_train_gradients = [tf.div(grad, batch_size) for grad in actor_train_gradients]
 
-        actor_optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate * 0.1)\
+        actor_optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate * 0.1)\
                 .apply_gradients(zip(actor_train_gradients, actor_variables))
 
 
@@ -95,7 +96,7 @@ class DDPG(object):
         loss             = tf.losses.mean_squared_error(environment_utility, critic_out)
         critic_gradients = tf.gradients(loss, critic_variables)
         critic_gradients = [tf.div(grad, batch_size) for grad in critic_gradients]
-        critic_optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)\
+        critic_optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)\
                 .apply_gradients(zip(critic_gradients, critic_variables))
 
         ##########################################

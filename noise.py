@@ -5,7 +5,7 @@ class OrnsteinNoiseTensorflow(object):
 
     def __init__(self, delta, sigma, ou_a, ou_mu
                 , noise_default=0, exploration=1
-                , decay=2e-5):
+                , decay=1e-4):
         self.delta = tf.constant(delta, dtype=tf.float32)
         self.sigma = tf.constant(sigma, dtype=tf.float32)
         self.ou_a  = tf.constant(ou_a,  dtype=tf.float32)

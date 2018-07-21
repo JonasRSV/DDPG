@@ -1,4 +1,8 @@
-# Implementation of a PG method using target networks with soft updates in tensorflow
+
+DDPG method implementation based on
+  * https://arxiv.org/abs/1509.02971
+  * https://arxiv.org/abs/1706.01905
+  * https://arxiv.org/abs/1607.06450
 
 
 Converges to no loss rather quickly but does not always succeed with balance'ing and sometimes when it succeeds it diverges later.

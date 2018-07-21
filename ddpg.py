@@ -273,7 +273,7 @@ class DDPG(object):
 
     def predict(self, state):
         if self.parameter_noise:
-            return self.sess.run(self.noise_process.noise_update_tensors() + [self.actor_out], feed_dict={self.actor_state: state})[-1]
+            return self.sess.run((self.noise_process.noise_update_tensors(), self.actor_out), feed_dict={self.actor_state: state})[-1]
         else:
             return self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
 

@@ -1,33 +1,41 @@
-# ===========================
-#   Noise - Ornstein Uhlenbeck
-#   Modified from: http://www.turingfinance.com/random-walks-down-wall-street-stochastic-processes-in-python/
-#   Author: Liam Pettigrew
-# ===========================
-import numpy as np
+import tensorflow as tf
 
-class Noise(object):
+class OrnsteinNoiseTensorflow(object):
 
-    def __init__(self, delta, sigma, ou_a, ou_mu):
-        # Noise parameters
-        self.delta = delta
-        self.sigma = sigma
-        self.ou_a = ou_a
-        self.ou_mu = ou_mu
+    def __init__(self, delta, sigma, ou_a, ou_mu, noise_default=0):
+        self.delta = tf.constant(delta, dtype=tf.float32)
+        self.sigma = tf.constant(sigma, dtype=tf.float32)
+        self.ou_a  = tf.constant(ou_a,  dtype=tf.float32)
+        self.ou_mu = tf.constant(ou_mu, dtype=tf.float32)
 
-    def brownian_motion_log_returns(self):
-        """
-        This method returns a Wiener process. The Wiener process is also called Brownian motion. For more information
-        about the Wiener process check out the Wikipedia page: http://en.wikipedia.org/wiki/Wiener_process
-        :return: brownian motion log returns
-        """
-        sqrt_delta_sigma = np.sqrt(self.delta) * self.sigma
-        return np.random.normal(loc=0, scale=sqrt_delta_sigma, size=None)
+        self.noise_default    = tf.constant(noise_default, dtype=tf.float32)
+        self.noise_assign_ops = []
 
-    def ornstein_uhlenbeck_level(self, prev_ou_level):
-        """
-        This method returns the rate levels of a mean-reverting ornstein uhlenbeck process.
-        :return: the Ornstein Uhlenbeck level
-        """
-        drift = self.ou_a * (self.ou_mu - prev_ou_level) * self.delta
-        randomness = self.brownian_motion_log_returns()
-        return prev_ou_level + drift + randomness
+    def brownian_motion(self, noise):
+        sqrt_delta_sigma = tf.sqrt(self.delta) * self.sigma
+        randomness = tf.random_normal(noise.shape, 
+                                      mean=0, 
+                                      stddev=sqrt_delta_sigma)
+
+        return randomness
+
+    def __call__(self, inputs):
+
+        noise = tf.ones_like(inputs, dtype=tf.float32)  * self.noise_default
+        noise = tf.Variable(noise,
+                            dtype=tf.float32,
+                            trainable=False)
+
+        drift           = self.ou_a * (self.ou_mu - noise) * self.delta
+        brownian_motion = self.brownian_motion(noise)
+        new_noise       = noise + drift + brownian_motion
+
+        self.noise_assign_ops.append(noise.assign(new_noise))
+
+        outputs         = new_noise + inputs
+
+        return outputs
+
+    def noise_update_tensors(self):
+        return self.noise_assign_ops
+

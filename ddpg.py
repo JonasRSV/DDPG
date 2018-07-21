@@ -1,4 +1,4 @@
-
+import noise
 import tensorflow as tf
 import numpy as np
 
@@ -15,11 +15,18 @@ CRITIC_CONNECTIONS = 15
 
 class DDPG(object):
 
-    def __init__(self, sess, state_dim, action_dim, learning_rate=0.01, tau=0.001, var_index=0, batch_size=64):
+    def __init__(self, sess, state_dim, action_dim, learning_rate=0.01, 
+                 tau=0.001, delta=1, sigma=0.3, ou_a=0.3, ou_mu=0.0, var_index=0,
+                 parameter_noise=True):
         self.sess  = sess
         self.s_dim = state_dim
         self.a_dim = action_dim
-        self.batch_size = batch_size
+
+        self.parameter_noise = parameter_noise
+        self.noise_process   = noise.OrnsteinNoiseTensorflow(delta,
+                                                             sigma,
+                                                             ou_a,
+                                                             ou_mu)
 
         ########################################################
         # Define Actor Critic Architecture and target networks #
@@ -64,10 +71,11 @@ class DDPG(object):
         # Actor gradients will be provided by the critic       #
         ########################################################
         actor_gradients = tf.placeholder(tf.float32, [None, self.a_dim])
+        batch_size      = tf.to_float(tf.shape(actor_gradients)[0])
 
         """ MINUS IS SUPER IMPORTANT! Remember! Hill Climb """
         actor_train_gradients = tf.gradients(actor_out, actor_variables, -actor_gradients)
-        actor_train_gradients = [tf.div(grad, self.batch_size) for grad in actor_train_gradients]
+        actor_train_gradients = [tf.div(grad, batch_size) for grad in actor_train_gradients]
 
         actor_optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate * 0.1)\
                 .apply_gradients(zip(actor_train_gradients, actor_variables))
@@ -82,10 +90,11 @@ class DDPG(object):
         ################################################
 
         environment_utility = tf.placeholder(tf.float32, [None, 1])
+        batch_size          = tf.to_float(tf.shape(environment_utility)[0])
 
         loss             = tf.losses.mean_squared_error(environment_utility, critic_out)
         critic_gradients = tf.gradients(loss, critic_variables)
-        critic_gradients = [tf.div(grad, self.batch_size) for grad in critic_gradients]
+        critic_gradients = [tf.div(grad, batch_size) for grad in critic_gradients]
         critic_optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)\
                 .apply_gradients(zip(critic_gradients, critic_variables))
 
@@ -229,20 +238,33 @@ class DDPG(object):
             ###############
             # Build Graph #
             ###############
+
+            if self.parameter_noise:
+                h_w1 = self.noise_process(h_w1)
+
             h1 = tf.matmul(state, h_w1)
             h1 = tf.nn.relu(tf.add(h1, h_b1))
 
             h1 = tf.contrib.layers.layer_norm(h1)
+
+            if self.parameter_noise:
+                h_w2 = self.noise_process(h_w2)
 
             h2 = tf.matmul(h1, h_w2)
             h2 = tf.nn.relu(tf.add(h2, h_b2))
 
             h2 = tf.contrib.layers.layer_norm(h2)
 
+            if self.parameter_noise:
+                h_w3 = self.noise_process(h_w3)
+
             h3 = tf.matmul(h2, h_w3)
             h3 = tf.nn.relu(tf.add(h3, h_b3))
 
             h3 = tf.contrib.layers.layer_norm(h3)
+
+            if self.parameter_noise:
+                out_w = self.noise_process(out_w)
 
             out = tf.matmul(h3, out_w)
             out = tf.nn.tanh(tf.add(out, out_b))
@@ -250,7 +272,10 @@ class DDPG(object):
         return state, out
 
     def predict(self, state):
-        return self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
+        if self.parameter_noise:
+            return self.sess.run(self.noise_process.noise_update_tensors() + [self.actor_out], feed_dict={self.actor_state: state})[-1]
+        else:
+            return self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
 
     def critique(self, state, action):
         return self.sess.run(self.critic_out, feed_dict={self.critic_state: state, self.critic_action: action})
@@ -266,11 +291,11 @@ class DDPG(object):
         ################################################
         # STEP 1: Get actor gradients and train critic #
         ################################################
-
         loss, actor_gradients, _ = self.sess.run((self.environment_loss, self.actor_gradients_op, self.critic_optimizer)
                                                     , feed_dict={ self.critic_state: state
                                                                 , self.critic_action: action
                                                                 , self.environment_utility: environment_utility})
+
         ########################################################
         # STEP 2: Train actor on the gradients from the critic #
         ########################################################

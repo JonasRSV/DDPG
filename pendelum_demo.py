@@ -6,7 +6,6 @@ import replay_buffer
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from noise import Noise
 
 
 ENV = 'Pendulum-v0'
@@ -22,23 +21,12 @@ MEMORY        = 0.99
 TAU           = 0.01
 
 
-DELTA = 1.0
-SIGMA = 0.3
-OU_A  = 0.3
-OU_MU = 0
-
-NOISE_DECAY  = 0.95
-INTIAL_NOISE = 0.2
-
-
 def train(env, actor, rpbuffer):
 
     actor.set_networks_equal()
 
     summary_write = tf.summary.FileWriter("summaries/", actor.sess.graph)
     summary_index = 0
-
-    noise_process = Noise(DELTA, SIGMA, OU_A, OU_MU)
 
     steps = 0
     for g in range(1, GENERATIONS):
@@ -48,7 +36,6 @@ def train(env, actor, rpbuffer):
         reward     = 0
         avg_action = 0
         loss       = 0
-        noise = np.zeros(ACTION_SPACE)
         while not terminal:
             env.render()
 
@@ -57,12 +44,9 @@ def train(env, actor, rpbuffer):
             s = s1.reshape(1, -1)
 
             action = actor.predict(s)[0]
-
             avg_action += action
 
-            noise  = noise_process.ornstein_uhlenbeck_level(noise) * INTIAL_NOISE * NOISE_DECAY**g * 3
-            action = np.clip((action + noise) * 2, -2, 2)
-
+            action = np.clip(action * 2, -2, 2)
             s2, r2, terminal, _ = env.step(action)
 
             reward += r2
@@ -122,7 +106,7 @@ if __name__ == "__main__":
     print(env.action_space)
 
     with tf.Session() as sess:
-        actor   = ddpg.DDPG(sess, STATE_SPACE, ACTION_SPACE, learning_rate=LEARNING_RATE, tau=TAU, batch_size=BATCHSZ)
+        actor   = ddpg.DDPG(sess, STATE_SPACE, ACTION_SPACE, learning_rate=LEARNING_RATE, tau=TAU)
         rpbuffer = replay_buffer.ReplayBuffer(FRAME_SZ)
 
         saver = tf.train.Saver()

@@ -12,12 +12,12 @@ ENV = 'Pendulum-v0'
 EPOCHS        = 2000
 ACTION_SPACE  = 1
 STATE_SPACE   = 3 
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.01
 
 FRAME_SZ      = 100000
-BATCHSZ       = 1400
+BATCHSZ       = 1236
 MEMORY        = 0.99
-TAU           = 0.01
+TAU           = 0.1
 
 
 def train(env, actor, rpbuffer):
@@ -64,7 +64,8 @@ def train(env, actor, rpbuffer):
                     else:
                         maximal_utilities.append(reward + MEMORY * utility)
 
-                loss += actor.train(s1b, a1b, maximal_utilities)
+                loss = actor.train(s1b, a1b, maximal_utilities)
+
                 actor.update_target_network()
 
 

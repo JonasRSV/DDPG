@@ -3,15 +3,11 @@ import tensorflow as tf
 import numpy as np
 
 def weigth_variable(shape):
-    initial = tf.truncated_normal(shape, stddev=0.1)
+    initial = tf.truncated_normal(shape, stddev=0.2, mean=0.0)
     return tf.Variable(initial, dtype=tf.float32)
 
-def bias_variable(shape):
-    initial = tf.constant(0.03, shape=shape)
-    return tf.Variable(initial, dtype=tf.float32)
-
-ACTOR_CONNECTIONS  = 8
-CRITIC_CONNECTIONS = 8
+ACTOR_CONNECTIONS  = 30
+CRITIC_CONNECTIONS = 30
 
 class DDPG(object):
 
@@ -28,6 +24,8 @@ class DDPG(object):
                                                              ou_a,
                                                              ou_mu,
                                                              decay=decay)
+
+        self.variables_to_normalize = []
 
         ########################################################
         # Define Actor Critic Architecture and target networks #
@@ -59,6 +57,21 @@ class DDPG(object):
                         for target_var, vanilla_var in zip(target_variables, vanilla_variables)]
 
 
+        ####################################
+        # Define Normalizing OP's          #
+        # https://arxiv.org/abs/1607.06450 #
+        ####################################
+
+        self.normalize_ops = []
+        for layer_var in self.variables_to_normalize:
+            mean, variance = tf.nn.moments(layer_var, axes=1)
+
+            mean     = tf.expand_dims(mean, [1])
+            variance = tf.expand_dims(variance, [1])
+
+            normalize_op = layer_var.assign((layer_var - mean) / tf.sqrt(variance + 1e-5))
+            self.normalize_ops.append(normalize_op)
+
         ########################################################
         #             Define Learning OP for actor             #
         # The Idea behind PG methods is to let the actor try   #
@@ -76,7 +89,7 @@ class DDPG(object):
 
         """ MINUS IS SUPER IMPORTANT! Remember! Hill Climb """
         actor_train_gradients = tf.gradients(actor_out, actor_variables, -actor_gradients)
-        actor_train_gradients = [tf.div(grad, batch_size) for grad in actor_train_gradients]
+        actor_train_gradients = [tf.clip_by_value(tf.div(grad, batch_size), -2, 2) for grad in actor_train_gradients]
 
         actor_optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate * 0.1)\
                 .apply_gradients(zip(actor_train_gradients, actor_variables))
@@ -95,7 +108,7 @@ class DDPG(object):
 
         loss             = tf.losses.mean_squared_error(environment_utility, critic_out)
         critic_gradients = tf.gradients(loss, critic_variables)
-        critic_gradients = [tf.div(grad, batch_size) for grad in critic_gradients]
+        critic_gradients = [tf.clip_by_value(tf.div(grad, batch_size), -2, 2) for grad in critic_gradients]
         critic_optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)\
                 .apply_gradients(zip(critic_gradients, critic_variables))
 
@@ -176,38 +189,22 @@ class DDPG(object):
             state  = tf.placeholder(tf.float32, [None, self.s_dim])
 
             h_w1 = weigth_variable([self.s_dim + self.a_dim, CRITIC_CONNECTIONS])
-            h_b1 = bias_variable([CRITIC_CONNECTIONS])
-
             h_w2 = weigth_variable([CRITIC_CONNECTIONS, CRITIC_CONNECTIONS])
-            h_b2 = bias_variable([CRITIC_CONNECTIONS])
-
             h_w3 = weigth_variable([CRITIC_CONNECTIONS, CRITIC_CONNECTIONS])
-            h_b3 = bias_variable([CRITIC_CONNECTIONS])
-
             out_w  = weigth_variable([CRITIC_CONNECTIONS, 1])
-            out_b  = bias_variable([1])
 
+            if name == "vanilla_critic":
+                self.variables_to_normalize.append(h_w1)
+                self.variables_to_normalize.append(h_w2)
+                self.variables_to_normalize.append(h_w3)
 
             ###############
             # Build Graph #
             ###############
-            h1 = tf.matmul(tf.concat([state, action], axis=-1), h_w1)
-            h1 = tf.nn.relu(tf.add(h1, h_b1))
-
-            h1 = tf.contrib.layers.layer_norm(h1)
-
-            h2 = tf.matmul(h1, h_w2)
-            h2 = tf.nn.relu(tf.add(h2, h_b2))
-
-            h2 = tf.contrib.layers.layer_norm(h2)
-
-            h3 = tf.matmul(h2, h_w3)
-            h3 = tf.nn.tanh(tf.add(h3, h_b3))
-
-            h3 = tf.contrib.layers.layer_norm(h3)
-
+            h1 = tf.nn.relu(tf.matmul(tf.concat([state, action], axis=-1), h_w1))
+            h2 = tf.nn.relu(tf.matmul(h1, h_w2))
+            h3 = tf.nn.tanh(tf.matmul(h2, h_w3))
             out = tf.matmul(h3, out_w)
-            out = tf.add(out, out_b)
 
         return state, action, out
 
@@ -225,16 +222,15 @@ class DDPG(object):
             state = tf.placeholder(tf.float32, [None, self.s_dim])
 
             h_w1 = weigth_variable([self.s_dim, ACTOR_CONNECTIONS])
-            h_b1 = bias_variable([ACTOR_CONNECTIONS])
-
             h_w2 = weigth_variable([ACTOR_CONNECTIONS, ACTOR_CONNECTIONS])
-            h_b2 = bias_variable([ACTOR_CONNECTIONS])
-
             h_w3 = weigth_variable([ACTOR_CONNECTIONS, ACTOR_CONNECTIONS])
-            h_b3 = bias_variable([ACTOR_CONNECTIONS])
-
             out_w = weigth_variable([ACTOR_CONNECTIONS, self.a_dim])
-            out_b = bias_variable([self.a_dim])
+
+            if name == "vanilla_actor":
+                self.variables_to_normalize.append(h_w1)
+                self.variables_to_normalize.append(h_w2)
+                self.variables_to_normalize.append(h_w3)
+                self.variables_to_normalize.append(out_w)
 
             ###############
             # Build Graph #
@@ -243,32 +239,22 @@ class DDPG(object):
             if self.parameter_noise:
                 h_w1 = self.noise_process(h_w1)
 
-            h1 = tf.matmul(state, h_w1)
-            h1 = tf.nn.relu(tf.add(h1, h_b1))
-
-            h1 = tf.contrib.layers.layer_norm(h1)
+            h1 = tf.nn.relu(tf.matmul(state, h_w1))
 
             if self.parameter_noise:
                 h_w2 = self.noise_process(h_w2)
 
-            h2 = tf.matmul(h1, h_w2)
-            h2 = tf.nn.relu(tf.add(h2, h_b2))
-
-            h2 = tf.contrib.layers.layer_norm(h2)
+            h2 = tf.nn.relu(tf.matmul(h1, h_w2))
 
             if self.parameter_noise:
                 h_w3 = self.noise_process(h_w3)
 
-            h3 = tf.matmul(h2, h_w3)
-            h3 = tf.nn.relu(tf.add(h3, h_b3))
-
-            h3 = tf.contrib.layers.layer_norm(h3)
+            h3 = tf.nn.relu(tf.matmul(h2, h_w3))
 
             if self.parameter_noise:
                 out_w = self.noise_process(out_w)
 
-            out = tf.matmul(h3, out_w)
-            out = tf.nn.tanh(tf.add(out, out_b))
+            out = tf.nn.tanh(tf.matmul(h3, out_w))
 
         return state, out
 
@@ -304,8 +290,14 @@ class DDPG(object):
         self.sess.run(self.actor_optimizer, feed_dict={ self.actor_state: state
                                                       , self.actor_gradients: actor_gradients[0]})
 
+        #################################
+        # STEP 3: Normalize the layers. #
+        #################################
+
+        self.sess.run(self.normalize_ops)
+
         ################################################################
-        # STEP 3: Return loss and Qmax if one like for some nice stats #
+        # STEP 4: Return loss and Qmax if one like for some nice stats #
         ################################################################
 
         return loss

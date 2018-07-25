@@ -38,11 +38,11 @@ class ReplayBuffer(object):
             batchsz   -= 1
 
         """ numpyfy """
-        sb_1 = np.array(sb_1)
-        ab_1 = np.array(ab_1)
-        rb_1 = np.array(rb_1)
-        db_1 = np.array(db_1)
-        sb_2 = np.array(sb_2)
+        sb_1 = np.array(sb_1).T
+        ab_1 = np.array(ab_1).T
+        rb_1 = np.array(rb_1).T
+        db_1 = np.array(db_1).T
+        sb_2 = np.array(sb_2).T
 
         return sb_1, ab_1, rb_1, db_1, sb_2
 

@@ -12,12 +12,12 @@ ENV = 'Pendulum-v0'
 EPOCHS        = 2000
 ACTION_SPACE  = 1
 STATE_SPACE   = 3 
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.001
 
 FRAME_SZ      = 100000
 BATCHSZ       = 1236
 MEMORY        = 0.99
-TAU           = 0.1
+TAU           = 0.01
 
 
 def train(env, actor, rpbuffer):
@@ -40,12 +40,13 @@ def train(env, actor, rpbuffer):
 
             steps += 1
 
-            s = s1.reshape(1, -1)
+            s = s1.reshape(-1, 1)
 
             action = actor.predict(s)[0]
             avg_action += action
 
             action = np.clip(action * 2, -2, 2)
+            print(action)
             s2, r2, terminal, _ = env.step(action)
 
             reward += r2
@@ -54,6 +55,7 @@ def train(env, actor, rpbuffer):
 
 
             if len(rpbuffer.buffer) > BATCHSZ:
+                print("TRAINING")
                 s1b, a1b, r1b, dd, s2b = rpbuffer.get(BATCHSZ)
                 environment_utility = actor.target_critique(s2b, a1b)
 
@@ -91,7 +93,7 @@ def play(env, actor, games=20):
 
         while not terminal:
             env.render()
-            s0 = s0.reshape(1, -1)
+            s0 = s0.reshape(-1, 1)
             action = actor.predict(s0)[0]
             print(action)
 

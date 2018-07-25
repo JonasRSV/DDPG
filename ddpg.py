@@ -12,7 +12,7 @@ CRITIC_CONNECTIONS = 30
 class DDPG(object):
 
     def __init__(self, sess, state_dim, action_dim, learning_rate=0.01, 
-                 tau=0.001, delta=1.0, sigma=0.3, ou_a=0.3, ou_mu=0.0, var_index=0,
+                 tau=0.001, delta=0.5, sigma=0.3, ou_a=0.3, ou_mu=0.0, var_index=0,
                  decay=1e-4, parameter_noise=True):
         self.sess  = sess
         self.s_dim = state_dim
@@ -64,10 +64,16 @@ class DDPG(object):
 
         self.normalize_ops = []
         for layer_var in self.variables_to_normalize:
+            mean     = None
+            variance = None
+            # if len(layer_var.shape) == 2:
             mean, variance = tf.nn.moments(layer_var, axes=1)
 
             mean     = tf.expand_dims(mean, [1])
             variance = tf.expand_dims(variance, [1])
+            # else:
+                # mean, variance = tf.nn.moments(layer_var, axes=0)
+
 
             normalize_op = layer_var.assign((layer_var - mean) / tf.sqrt(variance + 1e-5))
             self.normalize_ops.append(normalize_op)
@@ -189,22 +195,34 @@ class DDPG(object):
             state  = tf.placeholder(tf.float32, [None, self.s_dim])
 
             h_w1 = weigth_variable([self.s_dim + self.a_dim, CRITIC_CONNECTIONS])
+            h_b1 = weigth_variable([CRITIC_CONNECTIONS])
+
             h_w2 = weigth_variable([CRITIC_CONNECTIONS, CRITIC_CONNECTIONS])
+            h_b2 = weigth_variable([CRITIC_CONNECTIONS])
+
             h_w3 = weigth_variable([CRITIC_CONNECTIONS, CRITIC_CONNECTIONS])
+            h_b3 = weigth_variable([CRITIC_CONNECTIONS])
+
             out_w  = weigth_variable([CRITIC_CONNECTIONS, 1])
+            out_b  = weigth_variable([1])
 
             if name == "vanilla_critic":
                 self.variables_to_normalize.append(h_w1)
+                # self.variables_to_normalize.append(h_b1)
+
                 self.variables_to_normalize.append(h_w2)
+                # self.variables_to_normalize.append(h_b2)
+
                 self.variables_to_normalize.append(h_w3)
+                # self.variables_to_normalize.append(h_b3)
 
             ###############
             # Build Graph #
             ###############
-            h1 = tf.nn.relu(tf.matmul(tf.concat([state, action], axis=-1), h_w1))
-            h2 = tf.nn.relu(tf.matmul(h1, h_w2))
-            h3 = tf.nn.tanh(tf.matmul(h2, h_w3))
-            out = tf.matmul(h3, out_w)
+            h1 = tf.nn.tanh(tf.matmul(tf.concat([state, action], axis=-1), h_w1) + h_b1)
+            h2 = tf.nn.tanh(tf.matmul(h1, h_w2) + h_b2)
+            h3 = tf.nn.tanh(tf.matmul(h2, h_w3) + h_b3)
+            out = tf.matmul(h3, out_w) + out_b
 
         return state, action, out
 
@@ -222,15 +240,29 @@ class DDPG(object):
             state = tf.placeholder(tf.float32, [None, self.s_dim])
 
             h_w1 = weigth_variable([self.s_dim, ACTOR_CONNECTIONS])
+            h_b1 = weigth_variable([ACTOR_CONNECTIONS])
+
             h_w2 = weigth_variable([ACTOR_CONNECTIONS, ACTOR_CONNECTIONS])
+            h_b2 = weigth_variable([ACTOR_CONNECTIONS])
+
             h_w3 = weigth_variable([ACTOR_CONNECTIONS, ACTOR_CONNECTIONS])
+            h_b3 = weigth_variable([ACTOR_CONNECTIONS])
+
             out_w = weigth_variable([ACTOR_CONNECTIONS, self.a_dim])
+            out_b = weigth_variable([self.a_dim])
 
             if name == "vanilla_actor":
                 self.variables_to_normalize.append(h_w1)
+                # self.variables_to_normalize.append(h_b1)
+
                 self.variables_to_normalize.append(h_w2)
+                # self.variables_to_normalize.append(h_b2)
+
                 self.variables_to_normalize.append(h_w3)
+                # self.variables_to_normalize.append(h_b3)
+
                 self.variables_to_normalize.append(out_w)
+                # self.variables_to_normalize.append(out_b)
 
             ###############
             # Build Graph #
@@ -238,23 +270,27 @@ class DDPG(object):
 
             if self.parameter_noise:
                 h_w1 = self.noise_process(h_w1)
+                # h_b1 = self.noise_process(h_b1)
 
-            h1 = tf.nn.relu(tf.matmul(state, h_w1))
+            h1 = tf.nn.tanh(tf.matmul(state, h_w1) + h_b1)
 
             if self.parameter_noise:
                 h_w2 = self.noise_process(h_w2)
+                # h_b2 = self.noise_process(h_b2)
 
-            h2 = tf.nn.relu(tf.matmul(h1, h_w2))
+            h2 = tf.nn.tanh(tf.matmul(h1, h_w2) + h_b2)
 
             if self.parameter_noise:
                 h_w3 = self.noise_process(h_w3)
+                # h_b3 = self.noise_process(h_b3)
 
-            h3 = tf.nn.relu(tf.matmul(h2, h_w3))
+            h3 = tf.nn.tanh(tf.matmul(h2, h_w3) + h_b3)
 
             if self.parameter_noise:
                 out_w = self.noise_process(out_w)
+                # out_b = self.noise_process(out_b)
 
-            out = tf.nn.tanh(tf.matmul(h3, out_w))
+            out = tf.nn.tanh(tf.matmul(h3, out_w) + out_b)
 
         return state, out
 

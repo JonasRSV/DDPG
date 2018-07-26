@@ -6,14 +6,31 @@ def weigth_variable(shape):
     initial = tf.truncated_normal(shape, stddev=0.01, mean=0.0)
     return tf.Variable(initial, dtype=tf.float32)
 
-ACTOR_CONNECTIONS  = 8
-CRITIC_CONNECTIONS = 8
+
+def normalize_deviation(variable):
+    mean, variance = tf.nn.moments(variable, axes=0) 
+    return (variable - mean) / tf.sqrt(variance + 1)
+
+
+def normalize_vector(tensor, ord):
+    norm = tf.norm(tensor, ord=ord, axis=0)
+    return tensor / (norm + 1)
+
+
+def make_normalize_devation_op(variable):
+    normalize_op = variable.assign(normalize_deviation(variable))
+    return normalize_op
+
+
+ACTOR_CONNECTIONS  = 20
+CRITIC_CONNECTIONS = 20
+
 
 class DDPG(object):
 
     def __init__(self, sess, state_dim, action_dim, learning_rate=0.01, 
                  tau=0.001, delta=1.0, sigma=0.4, ou_a=0.4, ou_mu=0.0, var_index=0,
-                 decay=1e-4, parameter_noise=True):
+                 decay=5e-4, parameter_noise=True):
         self.sess  = sess
         self.s_dim = state_dim
         self.a_dim = action_dim
@@ -25,7 +42,11 @@ class DDPG(object):
                                                              ou_mu,
                                                              decay=decay)
 
-        self.variables_to_normalize = []
+        ####################################
+        # Define Normalizing OP's          #
+        # https://arxiv.org/abs/1607.06450 #
+        ####################################
+        self.normalize_deviation_ops = []
 
         ########################################################
         # Define Actor Critic Architecture and target networks #
@@ -57,20 +78,6 @@ class DDPG(object):
                         for target_var, vanilla_var in zip(target_variables, vanilla_variables)]
 
 
-        ####################################
-        # Define Normalizing OP's          #
-        # https://arxiv.org/abs/1607.06450 #
-        ####################################
-
-        self.normalize_ops = []
-        for layer_var in self.variables_to_normalize:
-            mean, variance = tf.nn.moments(layer_var, axes=1)
-
-            mean     = tf.expand_dims(mean, [1])
-            variance = tf.expand_dims(variance, [1])
-
-            normalize_op = layer_var.assign((layer_var - mean) / tf.sqrt(variance + 1e-5))
-            self.normalize_ops.append(normalize_op)
 
         ########################################################
         #             Define Learning OP for actor             #
@@ -89,7 +96,7 @@ class DDPG(object):
 
         """ MINUS IS SUPER IMPORTANT! Remember! Hill Climb """
         actor_train_gradients = tf.gradients(actor_out, actor_variables, -actor_gradients)
-        actor_train_gradients = [tf.clip_by_value(tf.div(grad, batch_size), -2, 2) for grad in actor_train_gradients]
+        actor_train_gradients = [normalize_vector(grad, "euclidean") / batch_size for grad in actor_train_gradients]
 
         actor_optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate * 0.1)\
                 .apply_gradients(zip(actor_train_gradients, actor_variables))
@@ -106,9 +113,9 @@ class DDPG(object):
         environment_utility = tf.placeholder(tf.float32, [1, None])
         batch_size          = tf.to_float(tf.shape(environment_utility)[1])
 
-        loss             = tf.losses.huber_loss(environment_utility, critic_out)
+        loss             = tf.losses.mean_squared_error(environment_utility, critic_out) 
         critic_gradients = tf.gradients(loss, critic_variables)
-        critic_gradients = [tf.clip_by_value(tf.div(grad, batch_size), -2, 2) for grad in critic_gradients]
+        critic_gradients = [normalize_vector(grad, "euclidean") / batch_size for grad in critic_gradients]
         critic_optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)\
                 .apply_gradients(zip(critic_gradients, critic_variables))
 
@@ -207,9 +214,9 @@ class DDPG(object):
 
 
             if name == "vanilla_critic":
-                self.variables_to_normalize.append(h_l1)
-                self.variables_to_normalize.append(h_l2)
-                self.variables_to_normalize.append(h_l3)
+                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l1))
+                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l2))
+                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l3))
 
 
             ###############
@@ -252,10 +259,11 @@ class DDPG(object):
             out_b = tf.expand_dims(out_l[:, -1], [1])
 
             if name == "vanilla_actor":
-                self.variables_to_normalize.append(h_l1)
-                self.variables_to_normalize.append(h_l2)
-                self.variables_to_normalize.append(h_l3)
-                self.variables_to_normalize.append(out_l)
+                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l1))
+                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l2))
+                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l3))
+                self.normalize_deviation_ops.append(make_normalize_devation_op(out_l))
+
 
             ###############
             # Build Graph #
@@ -319,7 +327,7 @@ class DDPG(object):
         # STEP 3: Normalize the layers. #
         #################################
 
-        self.sess.run(self.normalize_ops)
+        self.sess.run(self.normalize_deviation_ops)
 
         ################################################################
         # STEP 4: Return loss and Qmax if one like for some nice stats #

@@ -1,301 +1,194 @@
-import noise
 import tensorflow as tf
 import numpy as np
 
-def weigth_variable(shape):
-    initial = tf.truncated_normal(shape, stddev=0.01, mean=0.0)
-    return tf.Variable(initial, dtype=tf.float32)
-
-
-def normalize_deviation(variable):
-    mean, variance = tf.nn.moments(variable, axes=0) 
-    return (variable - mean) / tf.sqrt(variance + 1)
-
-
-def normalize_vector(tensor, ord):
-    norm = tf.norm(tensor, ord=ord, axis=0)
-    return tensor / (norm + 1)
-
-
-def make_normalize_devation_op(variable):
-    normalize_op = variable.assign(normalize_deviation(variable))
-    return normalize_op
-
-
-ACTOR_CONNECTIONS  = 20
-CRITIC_CONNECTIONS = 20
-
-
 class DDPG(object):
 
-    def __init__(self, sess, state_dim, action_dim, learning_rate=0.01, 
-                 tau=0.001, delta=1.0, sigma=0.4, ou_a=0.4, ou_mu=0.0, var_index=0,
-                 decay=5e-4, parameter_noise=True):
-        self.sess  = sess
+    def __init__(self, state_dim, action_dim, actor_lr=0.01, critic_lr=0.01, 
+                 tau=0.001, critic_hidden_layers=3, actor_hidden_layers=3,
+                 critic_hidden_neurons=32, actor_hidden_neurons=32, 
+                 scope="ddpg", add_param_noise=True, training=True):
+
+        self.sess  = tf.get_default_session()
         self.s_dim = state_dim
         self.a_dim = action_dim
 
-        self.parameter_noise = parameter_noise
-        self.noise_process   = noise.OrnsteinNoiseTensorflow(delta,
-                                                             sigma,
-                                                             ou_a,
-                                                             ou_mu,
-                                                             decay=decay)
-
-        ####################################
-        # Define Normalizing OP's          #
-        # https://arxiv.org/abs/1607.06450 #
-        ####################################
-        self.normalize_deviation_ops = []
+        self.add_param_noise = add_param_noise
+        self.training        = training
 
         ########################################################
         # Define Actor Critic Architecture and target networks #
         ########################################################
 
-        actor_state, actor_out = self.create_actor("vanilla_actor")
-        actor_variables  = tf.trainable_variables()[var_index:]
+        with tf.variable_scope(scope):
 
-        critic_state, critic_action, critic_out = self.create_critic("vanilla_critic")
-        critic_variables = tf.trainable_variables()[var_index + len(actor_variables):]
-
-        vanilla_variables = tf.trainable_variables()[var_index:]
-
-        target_actor_state, target_actor_out = self.create_actor("target_actor")
-        target_critic_state, target_critic_action, target_critic_out = self.create_critic("target_critic")
-
-        target_variables = tf.trainable_variables()[var_index + len(vanilla_variables):]
-
-        ###################################
-        # Define Target Network Update Op #
-        ###################################
-
-        update_op = [target_var.assign(tf.multiply(target_var, 1 - tau) +\
-                                       tf.multiply(vanilla_var, tau))
-                        for target_var, vanilla_var in zip(target_variables, vanilla_variables)]
+            with tf.variable_scope("pi"):
+                with tf.variable_scope("actor"):
+                    self.actor_state, self.actor_out =\
+                            self.create_actor(actor_hidden_layers, 
+                                              actor_hidden_neurons)
+                with tf.variable_scope("critic"):
+                    self.critic_state, self.critic_action, self.critic_out =\
+                            self.create_critic(critic_hidden_layers,
+                                               critic_hidden_neurons)
 
 
-        equal_op = [target_var.assign(vanilla_var)
-                        for target_var, vanilla_var in zip(target_variables, vanilla_variables)]
+            with tf.variable_scope("target_pi"):
+                with tf.variable_scope("actor"):
+                    self.target_actor_state, self.target_actor_out =\
+                            self.create_actor(actor_hidden_layers,
+                                              actor_hidden_neurons)
+                with tf.variable_scope("critic"):
+                    self.target_critic_state, self.target_critic_action, self.target_critic_out =\
+                            self.create_critic(critic_hidden_layers,
+                                               critic_hidden_neurons)
 
 
+            ###################################
+            # Define Target Network Update Op #
+            ###################################
 
-        ########################################################
-        #             Define Learning OP for actor             #
-        # The Idea behind PG methods is to let the actor try   #
-        # to maximize the utility (critic output) while the    #
-        # critic tries to minimize the error of its utility    #
-        # compared to the environment.                         #
-        #                                                      #
-        # The actor trains my hill-climbing the utility        #
-        # function with respect to its action                  #
-        #                                                      #
-        # Actor gradients will be provided by the critic       #
-        ########################################################
-        actor_gradients = tf.placeholder(tf.float32, [self.a_dim, None])
-        batch_size      = tf.to_float(tf.shape(actor_gradients)[1])
+            pi_vars        = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 
+                                           '{}/pi'.format(scope))
 
-        """ MINUS IS SUPER IMPORTANT! Remember! Hill Climb """
-        actor_train_gradients = tf.gradients(actor_out, actor_variables, -actor_gradients)
-        actor_train_gradients = [normalize_vector(grad, "euclidean") / batch_size for grad in actor_train_gradients]
+            target_pi_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 
+                                           '{}/target_pi'.format(scope))
 
-        actor_optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate * 0.1)\
-                .apply_gradients(zip(actor_train_gradients, actor_variables))
+            self.update_op = [tpv.assign(tf.multiply(tpv, 1 - tau) +\
+                                                   tf.multiply(pv, tau))
+                                for tpv, pv in zip(target_pi_vars, pi_vars)]
+
+
+            self.equal_op = [tpv.assign(pv)
+                                for tpv, pv in zip(target_pi_vars, pi_vars)]
 
 
 
-        ################################################
-        #          Define Learning OP for critic       #
-        # The critic tries to minimize the error       #
-        # between its utility function and the         #
-        # utility given by the environment it acts on  #
-        ################################################
+            ########################################################
+            #             Define Learning OP for actor             #
+            # The Idea behind PG methods is to let the actor try   #
+            # to maximize the utility (critic output) while the    #
+            # critic tries to minimize the error of its utility    #
+            # compared to the environment.                         #
+            #                                                      #
+            # The actor trains my hill-climbing the utility        #
+            # function with respect to its action                  #
+            #                                                      #
+            # Actor gradients will be provided by the critic       #
+            ########################################################
+            actor_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 
+                                            '{}/pi/actor'.format(scope))
 
-        environment_utility = tf.placeholder(tf.float32, [1, None])
-        batch_size          = tf.to_float(tf.shape(environment_utility)[1])
-
-        loss             = tf.losses.mean_squared_error(environment_utility, critic_out) 
-        critic_gradients = tf.gradients(loss, critic_variables)
-        critic_gradients = [normalize_vector(grad, "euclidean") / batch_size for grad in critic_gradients]
-        critic_optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)\
-                .apply_gradients(zip(critic_gradients, critic_variables))
-
-        ##########################################
-        # Define OP for getting Actor Gradients. #
-        # The Gradients used to train the actor. #
-        ##########################################
-
-        actor_gradients_op = tf.gradients(critic_out, critic_action)
-
-        ############################################################
-        # It's important to notice that critic_action != actor_out #
-        # critic_action = actor_out + EXPLORATION_NOISE            #
-        # PG methods is trained through off-policy exploration,    #
-        # therefore the critic_action if it was the good one is    #
-        # what the training will try to make the actor_action into #
-        # given the same state.                                    #
-        ############################################################
+            target_actor_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 
+                                            '{}/target_pi/actor'.format(scope))
 
 
-        ######################################
-        # Tensors needed for the PG network  #
-        # Vanilla PG does not need all these #
-        # tensors, theres alot of them       #
-        # because of the target network      #
-        #                                    #
-        # The purpose of the target network  #
-        # is to stabilize training through   #
-        # soft-updates.                      #
-        ######################################
+            self.actor_gradients = tf.placeholder(tf.float32, [None, self.a_dim])
 
-        self.actor_state      = actor_state
-        self.actor_out        = actor_out
+            """ MINUS IS SUPER IMPORTANT! Remember! Hill Climb """
+            actor_train_gradients = tf.gradients(self.target_actor_out, target_actor_vars, self.actor_gradients)
+            actor_train_gradients = [tf.clip_by_value(grad, -0.1, 0.1) for grad in actor_train_gradients]
 
-        self.critic_state     = critic_state
-        self.critic_out       = critic_out
-        self.critic_action    = critic_action
-
-        self.target_actor_state      = target_actor_state
-        self.target_actor_out        = target_actor_out
-
-        self.target_critic_state     = target_critic_state
-        self.target_critic_out       = target_critic_out
-        self.target_critic_action    = target_critic_action
-
-
-        #############################
-        # Training specific tensors #
-        #############################
-        self.actor_gradients = actor_gradients
-        self.actor_optimizer = actor_optimizer
-
-        self.environment_utility = environment_utility
-        self.environment_loss    = loss
-        self.critic_optimizer    = critic_optimizer
-
-        self.actor_gradients_op  = actor_gradients_op
-
-        ######################################
-        # For Soft updates to target network #
-        ######################################
-        self.update_op  = update_op
-        self.equal_op   = equal_op 
-
-
-    def create_critic(self, name):
-
-        ######################################################
-        # name_scope used to avoid variable name             #
-        # collisions as consequence of target architechture. #
-        ######################################################
-        with tf.name_scope(name):
-
-            ####################
-            # Define Variables #
-            ####################
-            action = tf.placeholder(tf.float32, [self.a_dim, None])
-            state  = tf.placeholder(tf.float32, [self.s_dim, None])
-
-            h_l1 = weigth_variable([CRITIC_CONNECTIONS, self.a_dim + self.s_dim + 1])
-            h_w1 = h_l1[:, :-1]
-            h_b1 = tf.expand_dims(h_l1[:, -1], [1])
-
-            h_l2 = weigth_variable([ACTOR_CONNECTIONS, ACTOR_CONNECTIONS + 1])
-            h_w2 = h_l2[:, :-1]
-            h_b2 = tf.expand_dims(h_l2[:, -1], [1])
-
-            h_l3 = weigth_variable([ACTOR_CONNECTIONS, ACTOR_CONNECTIONS + 1])
-            h_w3 = h_l3[:, :-1]
-            h_b3 = tf.expand_dims(h_l3[:, -1], [1])
-
-            out_l = weigth_variable([1, ACTOR_CONNECTIONS + 1])
-            out_w = out_l[:, :-1]
-            out_b = tf.expand_dims(out_l[:, -1], [1])
+            self.actor_optimizer = tf.train.AdamOptimizer(learning_rate=actor_lr)\
+                        .apply_gradients(zip(actor_train_gradients, actor_vars))
 
 
 
-            if name == "vanilla_critic":
-                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l1))
-                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l2))
-                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l3))
+            ################################################
+            #          Define Learning OP for critic       #
+            # The critic tries to minimize the error       #
+            # between its utility function and the         #
+            # utility given by the environment it acts on  #
+            ################################################
+            critic_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 
+                                            '{}/pi/critic'.format(scope))
+
+            target_critic_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 
+                                            '{}/target_pi/critic'.format(scope))
 
 
-            ###############
-            # Build Graph #
-            ###############
-            h1 = tf.nn.tanh(tf.matmul(h_w1, tf.concat([state, action], axis=0)) + h_b1)
-            h2 = tf.nn.tanh(tf.matmul(h_w2, h1) + h_b2)
-            h3 = tf.nn.tanh(tf.matmul(h_w3, h2) + h_b3)
-            out = tf.matmul(out_w, h3) + out_b
+            self.environment_utility = tf.placeholder(tf.float32, [None, 1])
+            self.loss                = tf.losses.mean_squared_error(self.environment_utility, self.target_critic_out) 
+
+            critic_gradients = tf.gradients(self.loss, target_critic_vars)
+            critic_gradients = [tf.clip_by_value(grad, -0.1, 0.1) for grad in critic_gradients]
+
+            self.critic_optimizer = tf.train.AdamOptimizer(learning_rate=critic_lr)\
+                        .apply_gradients(zip(critic_gradients, critic_vars))
+
+            ##########################################
+            # Define OP for getting Actor Gradients. #
+            # The Gradients used to train the actor. #
+            ##########################################
+
+            l1_regularizer          = tf.contrib.layers.l1_regularizer(scale=0.001, scope=None)
+            regularization_penalty  = tf.contrib.layers.apply_regularization(l1_regularizer, actor_vars)
+
+            self.actor_gradients_op = tf.gradients(-tf.reduce_mean(self.target_critic_out) + regularization_penalty, self.target_critic_action)
+
+    def create_critic(self, layers, neurons):
+
+        action = tf.placeholder(tf.float32, [None, self.a_dim])
+        state  = tf.placeholder(tf.float32, [None, self.s_dim])
+
+        initializer = tf.random_normal_initializer(mean=0, stddev=0.01)
+        
+        x = tf.layers.dense(tf.concat([action, state], axis=1), 
+                            neurons,
+                            activation=tf.nn.tanh,
+                            kernel_initializer=initializer)
+
+        x = tf.contrib.layers.layer_norm(x)
+        x = tf.layers.dropout(x, rate=0.01, training=self.training)
+
+        for _ in range(layers):
+            x = tf.layers.dense(x,
+                                neurons,
+                                activation=tf.nn.tanh,
+                                kernel_initializer=initializer)
+
+            x = tf.contrib.layers.layer_norm(x)
+            x = tf.layers.dropout(x, rate=0.01, training=self.training)
+
+        out = tf.layers.dense(x, 1, activation=None, kernel_initializer=initializer)
 
         return state, action, out
 
-    def create_actor(self, name):
+    def create_actor(self, layers, neurons):
 
-        ######################################################
-        # name_scope used to avoid variable name             #
-        # collisions as consequence of target architechture. #
-        ######################################################
-        with tf.name_scope(name):
+        state       = tf.placeholder(tf.float32, [None, self.s_dim])
+        initializer = tf.random_normal_initializer(mean=0, stddev=0.1)
+        param_noise = tf.keras.layers.GaussianNoise(stddev=2.0)
 
-            ####################
-            # Define Variables #
-            ####################
-            state = tf.placeholder(tf.float32, [self.s_dim, None])
+        x = tf.layers.dense(state, 
+                            neurons,
+                            activation=tf.nn.tanh,
+                            kernel_initializer=initializer)
 
-            h_l1 = weigth_variable([ACTOR_CONNECTIONS, self.s_dim + 1])
-            h_w1 = h_l1[:, :-1]
-            h_b1 = tf.expand_dims(h_l1[:, -1], [1])
+        x = tf.contrib.layers.layer_norm(x)
+        x = tf.layers.dropout(x, rate=0.01, training=self.training)
 
-            h_l2 = weigth_variable([ACTOR_CONNECTIONS, ACTOR_CONNECTIONS + 1])
-            h_w2 = h_l2[:, :-1]
-            h_b2 = tf.expand_dims(h_l2[:, -1], [1])
+        for _ in range(layers):
+            x = tf.layers.dense(x,
+                                neurons,
+                                activation=tf.nn.tanh,
+                                kernel_initializer=initializer)
 
-            h_l3 = weigth_variable([ACTOR_CONNECTIONS, ACTOR_CONNECTIONS + 1])
-            h_w3 = h_l3[:, :-1]
-            h_b3 = tf.expand_dims(h_l3[:, -1], [1])
+            x = tf.contrib.layers.layer_norm(x)
+            x = tf.layers.dropout(x, rate=0.01, training=self.training)
 
-            out_l = weigth_variable([self.a_dim, ACTOR_CONNECTIONS + 1])
-            out_w = out_l[:, :-1]
-            out_b = tf.expand_dims(out_l[:, -1], [1])
-
-            if name == "vanilla_actor":
-                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l1))
-                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l2))
-                self.normalize_deviation_ops.append(make_normalize_devation_op(h_l3))
-                self.normalize_deviation_ops.append(make_normalize_devation_op(out_l))
+            if self.add_param_noise:
+                x = param_noise(x)
 
 
-            ###############
-            # Build Graph #
-            ###############
+        out = tf.layers.dense(x, self.a_dim, activation=tf.nn.tanh, kernel_initializer=initializer)
 
-            if self.parameter_noise:
-                h_w1 = self.noise_process(h_w1)
-
-            h1 = tf.nn.tanh(tf.matmul(h_w1, state) + h_b1)
-
-            if self.parameter_noise:
-                h_w2 = self.noise_process(h_w2)
-
-            h2 = tf.nn.tanh(tf.matmul(h_w2, h1) + h_b2)
-
-            if self.parameter_noise:
-                h_w3 = self.noise_process(h_w3)
-
-            h3 = tf.nn.tanh(tf.matmul(h_w3, h2) + h_b3)
-
-            if self.parameter_noise:
-                out_w = self.noise_process(out_w)
-
-            out = tf.nn.tanh(tf.matmul(out_w, h3) + out_b)
+        if self.add_param_noise:
+            out = param_noise(out)
 
         return state, out
 
     def predict(self, state):
-        if self.parameter_noise:
-            return self.sess.run((*self.noise_process.noise_update_tensors(), self.actor_out), feed_dict={self.actor_state: state})[-1]
-        else:
-            return self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
+        return self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
 
     def critique(self, state, action):
         return self.sess.run(self.critic_out, feed_dict={self.critic_state: state, self.critic_action: action})
@@ -311,9 +204,11 @@ class DDPG(object):
         ################################################
         # STEP 1: Get actor gradients and train critic #
         ################################################
-        loss, actor_gradients, _ = self.sess.run((self.environment_loss, self.actor_gradients_op, self.critic_optimizer)
+        loss, actor_gradients, _ = self.sess.run((self.loss, self.actor_gradients_op, self.critic_optimizer)
                                                     , feed_dict={ self.critic_state: state
                                                                 , self.critic_action: action
+                                                                , self.target_critic_state: state
+                                                                , self.target_critic_action: action
                                                                 , self.environment_utility: environment_utility})
 
         ########################################################
@@ -321,17 +216,9 @@ class DDPG(object):
         ########################################################
 
         self.sess.run(self.actor_optimizer, feed_dict={ self.actor_state: state
+                                                      , self.target_actor_state: state
                                                       , self.actor_gradients: actor_gradients[0]})
 
-        #################################
-        # STEP 3: Normalize the layers. #
-        #################################
-
-        self.sess.run(self.normalize_deviation_ops)
-
-        ################################################################
-        # STEP 4: Return loss and Qmax if one like for some nice stats #
-        ################################################################
 
         return loss
 

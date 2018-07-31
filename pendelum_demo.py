@@ -12,10 +12,11 @@ ENV = 'Pendulum-v0'
 EPOCHS        = 2000
 ACTION_SPACE  = 1
 STATE_SPACE   = 3 
-LEARNING_RATE = 0.001
+ACTOR_LR      = 0.001
+CRITIC_LR     = 0.01
 
 FRAME_SZ      = 100000
-BATCHSZ       = 1236
+BATCHSZ       = 1024
 MEMORY        = 0.99
 TAU           = 0.01
 
@@ -35,15 +36,22 @@ def train(env, actor, rpbuffer):
         reward     = 0
         avg_action = 0
         loss       = 0
+
+        noise_process = np.zeros(ACTION_SPACE)
+        noise_scale = (0.1 * 0.99*g) * (4)
         while not terminal:
             env.render()
 
             steps += 1
 
-            s = s1.reshape(-1, 1)
+            s = s1.reshape(1, -1)
 
             action = actor.predict(s)[0]
             avg_action += action
+
+            noise_process = 0.15 * (0 - noise_process) + 0.2 * np.random.randn(ACTION_SPACE)
+            action += noise_process
+
 
             action = np.clip(action * 2, -2, 2)
             print(action)
@@ -54,7 +62,7 @@ def train(env, actor, rpbuffer):
             s1 = s2
 
 
-            if len(rpbuffer.buffer) > BATCHSZ:
+            if len(rpbuffer.buffer) > BATCHSZ * 8:
                 print("TRAINING")
                 s1b, a1b, r1b, dd, s2b = rpbuffer.get(BATCHSZ)
                 environment_utility = actor.target_critique(s2b, a1b)
@@ -93,7 +101,7 @@ def play(env, actor, games=20):
 
         while not terminal:
             env.render()
-            s0 = s0.reshape(-1, 1)
+            s0 = s0.reshape(1, -1)
             action = actor.predict(s0)[0]
             print(action)
 
@@ -108,7 +116,12 @@ if __name__ == "__main__":
     print(env.action_space)
 
     with tf.Session() as sess:
-        actor   = ddpg.DDPG(sess, STATE_SPACE, ACTION_SPACE, learning_rate=LEARNING_RATE, tau=TAU)
+        actor = ddpg.DDPG(STATE_SPACE, 
+                          ACTION_SPACE, 
+                          actor_lr=ACTOR_LR, 
+                          critic_lr=CRITIC_LR,
+                          tau=TAU)
+
         rpbuffer = replay_buffer.ReplayBuffer(FRAME_SZ)
 
         saver = tf.train.Saver()

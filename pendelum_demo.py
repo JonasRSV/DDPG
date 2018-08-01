@@ -12,7 +12,7 @@ ENV = 'Pendulum-v0'
 EPOCHS        = 2000
 ACTION_SPACE  = 1
 STATE_SPACE   = 3 
-ACTOR_LR      = 0.001
+ACTOR_LR      = 0.01
 CRITIC_LR     = 0.01
 
 FRAME_SZ      = 100000
@@ -33,12 +33,12 @@ def train(env, actor, rpbuffer):
         s1       = env.reset()
         terminal = False
         
-        reward     = 0
+        reward_     = 0
         avg_action = 0
         loss       = 0
 
         noise_process = np.zeros(ACTION_SPACE)
-        noise_scale = (0.1 * 0.99*g) * (4)
+        noise_scale = (0.1 * 0.999*g) * (4)
         while not terminal:
             env.render()
 
@@ -57,30 +57,20 @@ def train(env, actor, rpbuffer):
             print(action)
             s2, r2, terminal, _ = env.step(action)
 
-            reward += r2
+            reward_ += r2
             rpbuffer.add((s1, action, r2, terminal, s2))
             s1 = s2
 
 
-            if len(rpbuffer.buffer) > BATCHSZ * 8:
+            if len(rpbuffer.buffer) > BATCHSZ * 5:
                 print("TRAINING")
                 s1b, a1b, r1b, dd, s2b = rpbuffer.get(BATCHSZ)
-                environment_utility = actor.target_critique(s2b, a1b)
-
-                maximal_utilities = []
-                for reward, utility, term in zip(r1b, environment_utility, dd):
-                    if term:
-                        maximal_utilities.append([reward])
-                    else:
-                        maximal_utilities.append(reward + MEMORY * utility)
-
-                loss = actor.train(s1b, a1b, maximal_utilities)
-
+                loss = actor.train(s1b, a1b, r1b, dd, s2b)
                 actor.update_target_network()
 
 
         summary = tf.Summary()
-        summary.value.add(tag="Reward", simple_value=float(reward))
+        summary.value.add(tag="Reward", simple_value=float(reward_))
         summary.value.add(tag="Steps", simple_value=float(steps))
         summary.value.add(tag="Loss", simple_value=float(loss / 200))
         summary.value.add(tag="Action", simple_value=float(avg_action / 200))
@@ -103,6 +93,7 @@ def play(env, actor, games=20):
             env.render()
             s0 = s0.reshape(1, -1)
             action = actor.predict(s0)[0]
+            action = np.clip(action * 2, -2, 2)
             print(action)
 
             s0, _, terminal, _ = env.step(action)
@@ -118,6 +109,7 @@ if __name__ == "__main__":
     with tf.Session() as sess:
         actor = ddpg.DDPG(STATE_SPACE, 
                           ACTION_SPACE, 
+                          memory=MEMORY,
                           actor_lr=ACTOR_LR, 
                           critic_lr=CRITIC_LR,
                           tau=TAU)

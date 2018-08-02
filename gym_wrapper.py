@@ -27,6 +27,7 @@ def train(env,
             ss = s1.reshape(1, -1)
             action = actor.predict(ss)[0]
 
+            print(action)
             s2, r2, terminal, _ = env.step(a_mod(action))
             actor.add_experience((s1, action, r2, terminal, s2))
 
@@ -36,6 +37,9 @@ def train(env,
 
             if len(actor.exp_replay.buffer) > warm_up_steps:
                 ep_l += actor.train()
+
+            if terminal:
+                break
 
         summary = tf.Summary()
         summary.value.add(tag="Steps", simple_value=float(s))

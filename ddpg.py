@@ -55,7 +55,7 @@ class ExperienceReplay(object):
 
 class DDPG(object):
 
-    def __init__(self, state_dim, action_dim, env_min, env_max, memory=0.99, actor_lr=0.001,
+    def __init__(self, state_dim, action_dim, memory=0.99, actor_lr=0.001,
                  critic_lr=0.001, tau=0.1, critic_hidden_layers=3,
                  actor_hidden_layers=3, critic_hidden_neurons=32,
                  actor_hidden_neurons=32, dropout=0.0, regularization=0.01,
@@ -65,8 +65,6 @@ class DDPG(object):
         self.sess  = tf.get_default_session()
         self.s_dim = state_dim
         self.a_dim = action_dim
-        self.env_min = env_min
-        self.env_max = env_max
         self.memory = memory
         self.action_noise = action_noise
 
@@ -224,6 +222,7 @@ class DDPG(object):
 
         state       = tf.placeholder(tf.float32, [None, self.s_dim])
         regularizer = tf.contrib.layers.l2_regularizer(regularization)
+        # initializer = tf.contrib.layers.xavier_initializer(uniform=False)
         initializer = tf.contrib.layers.variance_scaling_initializer()
 
         x = tf.layers.dense(state, 
@@ -249,15 +248,16 @@ class DDPG(object):
 
             x = tf.layers.dropout(x, rate=dropout, training=self.training)
 
-        unscaled_out = tf.layers.dense(x, self.a_dim, kernel_regularizer=regularizer, use_bias=False)
-        out = self.env_min + tf.nn.sigmoid(unscaled_out) * (self.env_max - self.env_min)
-
+        out = tf.layers.dense(x, self.a_dim,
+                              activation=tf.nn.tanh, 
+                              # kernel_initializer=initializer,
+                              kernel_regularizer=regularizer)
         return state, out
 
     def predict(self, state):
         actions = self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
         if self.action_noise:
-            actions += next(self.action_noise) * (self.env_max - self.env_min)
+            actions += next(self.action_noise)
 
         return actions
 

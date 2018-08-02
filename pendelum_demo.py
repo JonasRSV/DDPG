@@ -10,7 +10,7 @@ ENV = 'Pendulum-v0'
 
 
 def action_modifier(action):
-    return np.clip(action, -2, 2)
+    return np.clip(action * 2, -2, 2)
 
 
 if __name__ == "__main__":
@@ -26,13 +26,11 @@ if __name__ == "__main__":
 
         actor = ddpg.DDPG(3,
                           1,
-                          -2,
-                          2,
                           memory=0.99,
                           actor_lr=0.001,
                           critic_lr=0.001,
-                          tau=0.001,
-                          exp_batch=256,
+                          tau=0.1,
+                          exp_batch=1024,
                           training=training)
 
         saver = tf.train.Saver()

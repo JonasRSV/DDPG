@@ -1,22 +1,82 @@
 import tensorflow as tf
 import numpy as np
+import random
+from collections import deque
+
+
+def OrnsteinNoise(theta, sigma, state):
+    while True:
+        yield state
+        state += -theta * state + sigma * (np.random.rand() - 0.5)
+
+
+class ExperienceReplay(object):
+
+    def __init__(self, capacity):
+        self.buffer   = deque(maxlen=capacity)
+        self.capacity = capacity
+
+    def add(self, frame):
+        self.buffer.append(frame)
+
+    def get(self, batchsz):
+
+        if len(self.buffer) < batchsz:
+            batchsz = len(self.buffer)
+
+        choices = random.sample(self.buffer, batchsz)
+
+        sb_1 = []
+        ab_1 = []
+        rb_1 = []
+        db_1 = []
+        sb_2 = []
+
+        while batchsz:
+            sb1, ab1, rb1, db1, sb2 = choices.pop()
+
+            sb_1.append(sb1)
+            ab_1.append(ab1)
+            rb_1.append(rb1)
+            db_1.append(db1)
+            sb_2.append(sb2)
+
+            batchsz -= 1
+
+        """ numpyfy """
+        sb_1 = np.array(sb_1)
+        ab_1 = np.array(ab_1)
+        rb_1 = np.array(rb_1)
+        db_1 = np.array(db_1)
+        sb_2 = np.array(sb_2)
+
+        return sb_1, ab_1, rb_1, db_1, sb_2
+
 
 class DDPG(object):
 
-    def __init__(self, state_dim, action_dim, memory=0.99, actor_lr=0.01, 
-                 critic_lr=0.01, tau=0.001, critic_hidden_layers=3, 
-                 actor_hidden_layers=3, critic_hidden_neurons=8, 
-                 actor_hidden_neurons=8, dropout=0.01, regularization=0.01, 
-                 scope="ddpg", add_layer_norm=False, add_param_noise=False, 
-                 training=True):
+    def __init__(self, state_dim, action_dim, env_min, env_max, memory=0.99, actor_lr=0.001,
+                 critic_lr=0.001, tau=0.1, critic_hidden_layers=3,
+                 actor_hidden_layers=3, critic_hidden_neurons=32,
+                 actor_hidden_neurons=32, dropout=0.0, regularization=0.01,
+                 scope="ddpg", add_layer_norm=False, training=True, 
+                 action_noise=None, max_exp_replay=100000, exp_batch=1024):
 
         self.sess  = tf.get_default_session()
         self.s_dim = state_dim
         self.a_dim = action_dim
+        self.env_min = env_min
+        self.env_max = env_max
         self.memory = memory
+        self.action_noise = action_noise
+
+        if training and action_noise is None:
+            self.action_noise = OrnsteinNoise(0.15, 0.2, 0)
+
+        self.exp_replay = ExperienceReplay(max_exp_replay)
+        self.exp_batch  = exp_batch
 
         self.add_layer_norm  = add_layer_norm
-        self.add_param_noise = add_param_noise
         self.training        = training
 
         ########################################################
@@ -39,7 +99,6 @@ class DDPG(object):
                                                dropout,
                                                regularization)
 
-
             with tf.variable_scope("target_pi"):
                 with tf.variable_scope("actor"):
                     self.target_actor_state, self.target_actor_out =\
@@ -53,7 +112,6 @@ class DDPG(object):
                                                critic_hidden_neurons,
                                                dropout,
                                                regularization)
-
 
             ###################################
             # Define Target Network Update Op #
@@ -69,11 +127,8 @@ class DDPG(object):
                                                    tf.multiply(pv, tau))
                                 for tpv, pv in zip(target_pi_vars, pi_vars)]
 
-
             self.equal_op = [tpv.assign(pv)
                                 for tpv, pv in zip(target_pi_vars, pi_vars)]
-
-
 
             ########################################################
             #             Define Learning OP for actor             #
@@ -87,14 +142,13 @@ class DDPG(object):
             #                                                      #
             # Actor gradients will be provided by the critic       #
             ########################################################
-            actor_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 
+            actor_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
                                             '{}/pi/actor'.format(scope))
 
             self.actor_gradients = tf.placeholder(tf.float32, [None, self.a_dim])
 
-            actor_train_gradients = tf.gradients(self.actor_out, actor_vars, -self.actor_gradients)
-            # actor_train_gradients = [tf.clip_by_value(grad, -1.0, 1.0) for grad in actor_train_gradients]
-            actor_train_gradients = [grad for grad in actor_train_gradients]
+            actor_train_gradients = tf.gradients(self.actor_out, actor_vars, self.actor_gradients)
+            # actor_train_gradients = [tf.clip_by_norm(grad, 2) for grad in actor_train_gradients]
 
             self.actor_optimizer = tf.train.AdamOptimizer(learning_rate=actor_lr)\
                         .apply_gradients(zip(actor_train_gradients, actor_vars))
@@ -115,7 +169,6 @@ class DDPG(object):
 
             critic_gradients = tf.gradients(self.loss, critic_vars)
             # critic_gradients = [tf.clip_by_value(grad, -1.0, 1.0) for grad in critic_gradients]
-            critic_gradients = [grad for grad in critic_gradients]
 
             self.critic_optimizer = tf.train.AdamOptimizer(learning_rate=critic_lr)\
                         .apply_gradients(zip(critic_gradients, critic_vars))
@@ -125,43 +178,44 @@ class DDPG(object):
             # The Gradients used to train the actor. #
             ##########################################
 
-            self.actor_gradients_op = tf.gradients(self.critic_out, self.critic_action)
+            self.actor_gradients_op =\
+                    tf.gradients(-tf.reduce_mean(self.critic_out),
+                                 self.critic_action)
 
     def create_critic(self, layers, neurons, dropout, regularization):
 
         action = tf.placeholder(tf.float32, [None, self.a_dim])
         state  = tf.placeholder(tf.float32, [None, self.s_dim])
 
-        initializer = tf.random_normal_initializer(mean=0.0, stddev=0.01)
         regularizer = tf.contrib.layers.l2_regularizer(regularization)
+        initializer = tf.contrib.layers.variance_scaling_initializer()
         
         x = tf.layers.dense(tf.concat([action, state], axis=1), 
                             neurons,
-                            activation=tf.nn.relu,
+                            activation=tf.nn.elu,
                             kernel_initializer=initializer,
                             kernel_regularizer=regularizer)
 
         if self.add_layer_norm:
-            x = tf.contrib.layers.layer_norm(x)
+            x = tf.contrib.layers.layer_norm(x, trainable=False)
 
         x = tf.layers.dropout(x, rate=dropout, training=self.training)
 
         for _ in range(layers):
             x = tf.layers.dense(x,
                                 neurons,
-                                activation=tf.nn.relu,
+                                activation=tf.nn.elu,
                                 kernel_initializer=initializer,
                                 kernel_regularizer=regularizer)
 
             if self.add_layer_norm:
-                x = tf.contrib.layers.layer_norm(x)
+                x = tf.contrib.layers.layer_norm(x, trainable=False)
 
             x = tf.layers.dropout(x, rate=dropout, training=self.training)
 
         out = tf.layers.dense(x, 
                              1, 
                              activation=None, 
-                             kernel_initializer=initializer,
                              kernel_regularizer=regularizer)
 
         return state, action, out
@@ -169,65 +223,66 @@ class DDPG(object):
     def create_actor(self, layers, neurons, dropout, regularization):
 
         state       = tf.placeholder(tf.float32, [None, self.s_dim])
-        initializer = tf.random_normal_initializer(mean=0.0, stddev=0.01)
         regularizer = tf.contrib.layers.l2_regularizer(regularization)
-        param_noise = tf.keras.layers.GaussianNoise(stddev=2.0)
+        initializer = tf.contrib.layers.variance_scaling_initializer()
 
         x = tf.layers.dense(state, 
                             neurons,
-                            activation=tf.nn.tanh,
+                            activation=tf.nn.elu,
                             kernel_initializer=initializer,
                             kernel_regularizer=regularizer)
 
         if self.add_layer_norm:
-            x = tf.contrib.layers.layer_norm(x)
+            x = tf.contrib.layers.layer_norm(x, trainable=False)
 
         x = tf.layers.dropout(x, rate=dropout, training=self.training)
 
         for _ in range(layers):
             x = tf.layers.dense(x,
                                 neurons,
-                                activation=tf.nn.tanh,
+                                activation=tf.nn.elu,
                                 kernel_initializer=initializer,
                                 kernel_regularizer=regularizer)
 
             if self.add_layer_norm:
-                x = tf.contrib.layers.layer_norm(x)
+                x = tf.contrib.layers.layer_norm(x, trainable=False)
 
             x = tf.layers.dropout(x, rate=dropout, training=self.training)
 
-            if self.add_param_noise:
-                x = param_noise(x)
-
-
-        out = tf.layers.dense(x, 
-                              self.a_dim, 
-                              activation=tf.nn.tanh, 
-                              kernel_initializer=initializer,
-                              kernel_regularizer=regularizer)
-
-        if self.add_param_noise:
-            out = param_noise(out)
+        unscaled_out = tf.layers.dense(x, self.a_dim, kernel_regularizer=regularizer, use_bias=False)
+        out = self.env_min + tf.nn.sigmoid(unscaled_out) * (self.env_max - self.env_min)
 
         return state, out
 
     def predict(self, state):
-        return self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
+        actions = self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
+        if self.action_noise:
+            actions += next(self.action_noise) * (self.env_max - self.env_min)
+
+        return actions
 
     def critique(self, state, action):
-        return self.sess.run(self.critic_out, feed_dict={self.critic_state: state, self.critic_action: action})
+        return self.sess.run(self.critic_out,
+                             feed_dict={self.critic_state: state,
+                                        self.critic_action: action})
 
     def target_predict(self, state):
-        return self.sess.run(self.target_actor_out, feed_dict={self.target_actor_state: state})
+        return self.sess.run(self.target_actor_out,
+                             feed_dict={self.target_actor_state: state})
+
 
     def target_critique(self, state, action):
-        return self.sess.run(self.target_critic_out, feed_dict={self.target_critic_state: state, self.target_critic_action: action})
+        return self.sess.run(self.target_critic_out,
+                             feed_dict={self.target_critic_state: state,
+                                        self.target_critic_action: action})
 
-    def train(self, s1b, a1b, r1b, tb, s2b):
+    def train(self):
         #######################################
         # Get predicted utility of next state #
         #######################################
-        a2b = self.predict(s2b)
+        s1b, a1b, r1b, tb, s2b = self.exp_replay.get(self.exp_batch)
+
+        a2b               = self.target_predict(s2b)
         next_utility      = self.target_critique(s2b, a2b).reshape(-1)
         predicted_utility = r1b + self.memory * (1 - tb) * next_utility
         predicted_utility = predicted_utility.reshape(-1, 1)
@@ -247,7 +302,7 @@ class DDPG(object):
         self.sess.run(self.actor_optimizer, feed_dict={ self.actor_state: s1b
                                                       , self.actor_gradients: actor_gradients[0]})
 
-
+        self.update_target_network()
         return loss
 
     def set_networks_equal(self):
@@ -255,4 +310,7 @@ class DDPG(object):
 
     def update_target_network(self):
         self.sess.run(self.update_op)
+
+    def add_experience(self, experience):
+        self.exp_replay.add(experience)
 

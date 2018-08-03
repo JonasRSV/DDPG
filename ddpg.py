@@ -55,8 +55,8 @@ class DDPG(object):
                  actor_hidden_neurons=32, dropout=0.0, regularization=0.01,
                  scope="ddpg", add_layer_norm=False, training=True,
                  noise_decay=0, min_noise=0.1, noise_sigmas=None, 
-                 noise_thetas=None, actor_lr_decay=0.0, 
-                 critic_lr_decay=0.0, max_exp_replay=100000, exp_batch=1024):
+                 noise_thetas=None, actor_lr_decay=0.0, critic_lr_decay=0.0, 
+                 delay_actor_train=0, max_exp_replay=100000, exp_batch=1024):
 
         self.sess  = tf.get_default_session()
         self.s_dim = state_dim
@@ -138,6 +138,8 @@ class DDPG(object):
             #                                                      #
             # Actor gradients will be provided by the critic       #
             ########################################################
+            ddpg_train_step = tf.Variable(0, dtype=tf.int32)
+
             actor_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
                                             '{}/pi/actor'.format(scope))
 
@@ -147,8 +149,11 @@ class DDPG(object):
             # actor_train_gradients = [tf.clip_by_norm(grad, 2) for grad in actor_train_gradients]
 
             actor_lr_scale = tf.Variable(1, dtype=tf.float32)
-            self.actor_optimizer = tf.train.AdamOptimizer(learning_rate=actor_lr * actor_lr_scale)\
-                        .apply_gradients(zip(actor_train_gradients, actor_vars))
+            self.actor_optimizer = tf.cond(ddpg_train_step > delay_actor_train,
+                                            lambda: tf.train.AdamOptimizer(learning_rate=actor_lr * actor_lr_scale)
+                                                        .apply_gradients(zip(actor_train_gradients, actor_vars)),
+                                            lambda: tf.train.AdamOptimizer(0)
+                                                        .apply_gradients(zip(actor_train_gradients, actor_vars)))
 
 
 
@@ -169,7 +174,9 @@ class DDPG(object):
 
             critic_lr_scale = tf.Variable(1, dtype=tf.float32)
             self.critic_optimizer = tf.train.AdamOptimizer(learning_rate=critic_lr * critic_lr_scale)\
-                        .apply_gradients(zip(critic_gradients, critic_vars))
+                                                .apply_gradients(zip(critic_gradients, critic_vars))
+
+
 
             ##########################################
             # Define OP for getting Actor Gradients. #
@@ -183,7 +190,6 @@ class DDPG(object):
             #################################
             # Define Exploration Operations #
             #################################
-            ddpg_train_step = tf.Variable(0, dtype=tf.int32)
             
             noise_scale = tf.Variable(1, dtype=tf.float32)
             noise_decay = tf.constant(1 - noise_decay, dtype=tf.float32)

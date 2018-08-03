@@ -4,12 +4,6 @@ import random
 from collections import deque
 
 
-def OrnsteinNoise(theta, sigma, state):
-    while True:
-        yield state
-        state += -theta * state + sigma * (np.random.rand() - 0.5)
-
-
 class ExperienceReplay(object):
 
     def __init__(self, capacity):
@@ -59,23 +53,27 @@ class DDPG(object):
                  critic_lr=0.001, tau=0.1, critic_hidden_layers=3,
                  actor_hidden_layers=3, critic_hidden_neurons=32,
                  actor_hidden_neurons=32, dropout=0.0, regularization=0.01,
-                 scope="ddpg", add_layer_norm=False, training=True, 
-                 action_noise=None, max_exp_replay=100000, exp_batch=1024):
+                 scope="ddpg", add_layer_norm=False, training=True,
+                 noise_decay=0, min_noise=0.1, noise_sigmas=None, 
+                 noise_thetas=None, actor_lr_decay=0.0, critic_lr_decay=0.0, 
+                 delay_actor_train=0, max_exp_replay=100000, exp_batch=1024):
 
         self.sess  = tf.get_default_session()
         self.s_dim = state_dim
         self.a_dim = action_dim
         self.memory = memory
-        self.action_noise = action_noise
-
-        if training and action_noise is None:
-            self.action_noise = OrnsteinNoise(0.15, 0.2, 0)
 
         self.exp_replay = ExperienceReplay(max_exp_replay)
         self.exp_batch  = exp_batch
 
         self.add_layer_norm  = add_layer_norm
         self.training        = training
+
+        if noise_sigmas is None:
+            noise_sigmas = np.ones(self.a_dim) * 0.15
+
+        if noise_thetas is None:
+            noise_thetas = np.ones(self.a_dim) * 0.2
 
         ########################################################
         # Define Actor Critic Architecture and target networks #
@@ -140,16 +138,22 @@ class DDPG(object):
             #                                                      #
             # Actor gradients will be provided by the critic       #
             ########################################################
+            ddpg_train_step = tf.Variable(0, dtype=tf.int32)
+
             actor_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
                                             '{}/pi/actor'.format(scope))
 
-            self.actor_gradients = tf.placeholder(tf.float32, [None, self.a_dim])
+            self.actor_gradients  = tf.placeholder(tf.float32, [None, self.a_dim])
 
             actor_train_gradients = tf.gradients(self.actor_out, actor_vars, self.actor_gradients)
             # actor_train_gradients = [tf.clip_by_norm(grad, 2) for grad in actor_train_gradients]
 
-            self.actor_optimizer = tf.train.AdamOptimizer(learning_rate=actor_lr)\
-                        .apply_gradients(zip(actor_train_gradients, actor_vars))
+            actor_lr_scale = tf.Variable(1, dtype=tf.float32)
+            self.actor_optimizer = tf.cond(ddpg_train_step > delay_actor_train,
+                                            lambda: tf.train.AdamOptimizer(learning_rate=actor_lr * actor_lr_scale)
+                                                        .apply_gradients(zip(actor_train_gradients, actor_vars)),
+                                            lambda: tf.train.AdamOptimizer(0)
+                                                        .apply_gradients(zip(actor_train_gradients, actor_vars)))
 
 
 
@@ -168,8 +172,11 @@ class DDPG(object):
             critic_gradients = tf.gradients(self.loss, critic_vars)
             # critic_gradients = [tf.clip_by_value(grad, -1.0, 1.0) for grad in critic_gradients]
 
-            self.critic_optimizer = tf.train.AdamOptimizer(learning_rate=critic_lr)\
-                        .apply_gradients(zip(critic_gradients, critic_vars))
+            critic_lr_scale = tf.Variable(1, dtype=tf.float32)
+            self.critic_optimizer = tf.train.AdamOptimizer(learning_rate=critic_lr * critic_lr_scale)\
+                                                .apply_gradients(zip(critic_gradients, critic_vars))
+
+
 
             ##########################################
             # Define OP for getting Actor Gradients. #
@@ -179,6 +186,48 @@ class DDPG(object):
             self.actor_gradients_op =\
                     tf.gradients(-tf.reduce_mean(self.critic_out),
                                  self.critic_action)
+
+            #################################
+            # Define Exploration Operations #
+            #################################
+            
+            noise_scale = tf.Variable(1, dtype=tf.float32)
+            noise_decay = tf.constant(1 - noise_decay, dtype=tf.float32)
+            thetas      = tf.constant(noise_thetas, dtype=tf.float32)
+            sigmas      = tf.constant(noise_sigmas, dtype=tf.float32)
+            noise_state = tf.Variable(tf.zeros(self.a_dim, dtype=tf.float32))
+            noise       = noise_state - thetas * noise_state + sigmas * tf.random_normal([self.a_dim], mean=0, stddev=0.5)
+
+            self.actor_stochastic_out = self.actor_out + tf.expand_dims(noise, 0) * noise_scale
+
+            self.noise_down_op    = tf.cond(noise_scale > min_noise,
+                                            lambda: noise_scale.assign(noise_scale * noise_decay),
+                                            lambda: noise_scale.assign(noise_scale))
+
+            self.noise_state_u_op = noise_state.assign(noise)
+
+            actor_lr_decay  = tf.constant(1 - actor_lr_decay, tf.float32)
+            critic_lr_decay = tf.constant(1 - critic_lr_decay, tf.float32)
+
+            self.decay_actor_lr_op  = actor_lr_scale.assign(actor_lr_scale * actor_lr_decay)
+            self.decay_critic_lr_op = critic_lr_scale.assign(critic_lr_scale * critic_lr_decay)
+            self.u_train_step = ddpg_train_step.assign(ddpg_train_step + 1)
+
+            self.u_exp_lr_ops = (self.noise_down_op, self.noise_state_u_op,\
+                                 self.decay_actor_lr_op, self.decay_critic_lr_op,\
+                                 self.u_train_step)
+
+            ##############################
+            # Assume that if training    #
+            # Exploration will always be #
+            # of interest                #
+            ##############################
+
+            if self.training:
+                self.predict = self._predict_stochastic
+            else:
+                self.predict = self._predict
+
 
     def create_critic(self, layers, neurons, dropout, regularization):
 
@@ -255,12 +304,11 @@ class DDPG(object):
                               kernel_regularizer=regularizer)
         return state, out
 
-    def predict(self, state):
-        actions = self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
-        if self.action_noise:
-            actions += next(self.action_noise)
+    def _predict(self, state):
+        return self.sess.run(self.actor_out, feed_dict={self.actor_state: state})
 
-        return actions
+    def _predict_stochastic(self, state):
+        return self.sess.run(self.actor_stochastic_out, feed_dict={self.actor_state: state})
 
     def critique(self, state, action):
         return self.sess.run(self.critic_out,
@@ -303,7 +351,16 @@ class DDPG(object):
         self.sess.run(self.actor_optimizer, feed_dict={ self.actor_state: s1b
                                                       , self.actor_gradients: actor_gradients[0]})
 
+        ######################################################
+        # STEP 3: Update exploration process and decrease lr #
+        ######################################################
+        self.sess.run(self.u_exp_lr_ops)
+
+        ##################################
+        # STEP 4: Update Target Networks #
+        ##################################
         self.update_target_network()
+
         return loss
 
     def set_networks_equal(self):

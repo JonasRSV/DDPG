@@ -42,8 +42,8 @@ def train(env,
 
         summary = tf.Summary()
         summary.value.add(tag="Steps", simple_value=float(s))
-        summary.value.add(tag="Reward", simple_value=float(ep_r / 200))
-        summary.value.add(tag="Loss", simple_value=float(ep_l / 200))
+        summary.value.add(tag="Reward", simple_value=float(ep_r / max_ep_step))
+        summary.value.add(tag="Loss", simple_value=float(ep_l / max_ep_step))
 
         summary_write.add_summary(summary, summary_index)
         summary_write.flush()

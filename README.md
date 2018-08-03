@@ -5,13 +5,9 @@ DDPG method implementation based on
   * https://arxiv.org/abs/1607.06450
 
 
-The one thing i've learned from trying to implement this is... don't... i've compared this to
-a few other implementations i've found online and it performce comparably but it does not perform 
-super well like most others. I recommend using https://github.com/openai/baselines if you need performance.
+RUN: python3 pendelum\_demo.py -n -t
+THEN: python3 pendelum\_demo.py -p
 
 
-PS. I'd love pointers how i can improve this implementation.. comparing with the baseline code does not really help me.
 
-![Imgur](https://i.imgur.com/i8kSlVA.png)
-
-
+<a href="https://giphy.com/gifs/pPhC9JJAvIOK3gfnz9"> <img src="https://media.giphy.com/media/pPhC9JJAvIOK3gfnz9/giphy.gif" title="Pendelum demo"/></a>

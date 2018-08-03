@@ -27,7 +27,6 @@ def train(env,
             ss = s1.reshape(1, -1)
             action = actor.predict(ss)[0]
 
-            print(action)
             s2, r2, terminal, _ = env.step(a_mod(action))
             actor.add_experience((s1, action, r2, terminal, s2))
 

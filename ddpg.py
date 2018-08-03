@@ -187,6 +187,7 @@ class DDPG(object):
 
         regularizer = tf.contrib.layers.l2_regularizer(regularization)
         initializer = tf.contrib.layers.variance_scaling_initializer()
+        # initializer = tf.truncated_normal_initializer(mean=0, stddev=1.)
         
         x = tf.layers.dense(tf.concat([action, state], axis=1), 
                             neurons,

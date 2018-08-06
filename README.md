@@ -15,5 +15,11 @@ DDPG method implementation based on
 > PLAY: python3 pendelum\_demo.py -p
 
 
+Summaries
+---
+Start Tensorboard on the summaries directory, create one if there is none then run:
+> tensorboard --logdir=summaries
+
+
 #### Demo
 <a href="https://giphy.com/gifs/pPhC9JJAvIOK3gfnz9"> <img width=400px src="https://media.giphy.com/media/pPhC9JJAvIOK3gfnz9/giphy.gif" title="Pendelum demo"/></a>

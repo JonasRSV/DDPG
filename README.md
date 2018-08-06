@@ -22,4 +22,4 @@ Start Tensorboard on the summaries directory, create one if there is none then r
 
 
 #### Demo
-<a href="https://giphy.com/gifs/pPhC9JJAvIOK3gfnz9"> <img width=400px src="https://media.giphy.com/media/pPhC9JJAvIOK3gfnz9/giphy.gif" title="Pendelum demo"/></a>
+<a href="https://giphy.com/gifs/pPhC9JJAvIOK3gfnz9"> <img width=399px src="https://media.giphy.com/media/pPhC9JJAvIOK3gfnz9/giphy.gif" title="Pendelum demo"/></a>

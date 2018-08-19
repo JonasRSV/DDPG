@@ -88,6 +88,7 @@ class DDPG(object):
                                               actor_hidden_neurons,
                                               dropout,
                                               regularization)
+
                 with tf.variable_scope("critic"):
                     self.critic_state, self.critic_action, self.critic_out =\
                             self.create_critic(critic_hidden_layers,
@@ -102,6 +103,7 @@ class DDPG(object):
                                               actor_hidden_neurons,
                                               dropout,
                                               regularization)
+
                 with tf.variable_scope("critic"):
                     self.target_critic_state, self.target_critic_action, self.target_critic_out =\
                             self.create_critic(critic_hidden_layers,
